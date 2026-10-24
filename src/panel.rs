@@ -1,5 +1,5 @@
-//! Presentation-only tray flyout. Hardware polling stays in native_devices.
-use crate::native_devices::{DeviceKind, DeviceReading, PowerState};
+//! Presentation-only tray flyout. Hardware polling stays in devices.
+use crate::devices::{self, kind_label, DeviceKind, DeviceReading, PowerState};
 use anyhow::{Result, anyhow};
 use fontdue::{Font, FontSettings};
 use softbuffer::{Context, Surface};
@@ -386,7 +386,7 @@ impl Panel {
             c.refresh_icon(REFRESH_X + REFRESH_WIDTH / 2.0, FOOTER_CENTER_Y, MUTED);
             for (index, kind) in [DeviceKind::Headset, DeviceKind::Mouse].iter().enumerate() {
                 let top = 15.0 + index as f32 * 77.0;
-                let reading = self.readings.iter().find(|r| r.device_kind == *kind);
+                let reading = devices::primary(&self.readings, *kind);
                 let percentage = reading.and_then(|r| r.battery_percent);
                 let power = reading.map_or(PowerState::Offline, |r| r.power);
                 let color = if power == PowerState::Charging {
@@ -402,17 +402,15 @@ impl Panel {
                     top + 7.0,
                     if percentage.is_some() { color } else { MUTED },
                 );
-                c.text(
-                    if *kind == DeviceKind::Headset {
-                        "HyperX Cloud III S"
-                    } else {
-                        "Logitech PRO X 2 DEX"
-                    },
-                    71.0,
-                    top + 2.0,
+                let value = percentage.map_or_else(|| "—".to_string(), |p| format!("{p}%"));
+                // Device-reported names vary in length; keep clear of the percentage.
+                let name_width = 317.0 - c.text_width(&value, 24.0) - 12.0 - 71.0;
+                let name = c.fit(
+                    reading.map_or(kind_label(*kind), |r| r.name.as_str()),
                     14.0,
-                    WHITE,
+                    name_width,
                 );
+                c.text(&name, 71.0, top + 2.0, 14.0, WHITE);
                 let status = match power {
                     PowerState::Charging => "Charging",
                     PowerState::Full => "Fully charged",
@@ -431,7 +429,6 @@ impl Panel {
                         MUTED
                     },
                 );
-                let value = percentage.map_or_else(|| "—".to_string(), |p| format!("{p}%"));
                 c.text_right(&value, 317.0, top - 1.0, 24.0, color);
                 c.rect(71.0, top + 52.0, 246.0, 4.0, [62, 66, 72]);
                 if let Some(p) = percentage {
@@ -606,6 +603,21 @@ impl Canvas<'_> {
         text.chars()
             .map(|ch| self.font.metrics(ch, px).height as f32 / self.scale)
             .fold(0.0, f32::max)
+    }
+    /// `text`, shortened with an ellipsis to fit `max_width`.
+    fn fit(&self, text: &str, size: f32, max_width: f32) -> String {
+        if self.text_width(text, size) <= max_width {
+            return text.to_owned();
+        }
+        let mut chars: Vec<char> = text.chars().collect();
+        while !chars.is_empty() {
+            chars.pop();
+            let candidate = format!("{}…", chars.iter().collect::<String>().trim_end());
+            if self.text_width(&candidate, size) <= max_width {
+                return candidate;
+            }
+        }
+        "…".to_owned()
     }
     fn text(&mut self, text: &str, x: f32, y: f32, size: f32, color: [u8; 3]) {
         let px = size * self.scale;

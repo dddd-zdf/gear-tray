@@ -35,8 +35,12 @@ The headset reports a battery percentage but its referenced protocol does not do
 
 ## Modules
 
-- `src/native_devices.rs`: device discovery, HID transport, battery protocol handling and plain reading types. No tray or window dependencies in this module.
-- `src/lib.rs`: starts the device worker and the push listeners for both devices, and passes readings to the UI.
+- `src/devices/`: device access, with no tray or window dependencies.
+  - `mod.rs`: reading types, the `Driver` trait and the list of drivers.
+  - `hid.rs`: shared HID access (enumerate, open, read and write, watch an interface for pushes).
+  - `hyperx.rs`, `logitech.rs`: one driver per brand: battery queries and push parsing.
+- `src/worker.rs`: owns all device reads; turns pushes into readings and polls only drivers that cannot push.
+- `src/lib.rs`: wires the worker to the UI.
 - `src/audio_output.rs`: lists Windows sound outputs, changes the default, and decides which output fits the headset state.
 - `src/app.rs`: application controller, tray lifecycle, readings and panel actions.
 - `src/panel.rs`: popup layout, drawing and input handling.
@@ -44,7 +48,7 @@ The headset reports a battery percentage but its referenced protocol does not do
 - `src/notify.rs`, `src/settings.rs`: battery alerts and saved preferences.
 - `src/bin/diagnostics.rs`: console consumer of the device module.
 
-To add another device, implement its battery query behind the device module and return a reading. Protocol code should never manipulate tray icons; UI code should never open HID handles.
+To add gear, write a driver in `src/devices/` that implements `Driver` and add it to `drivers()`. `poll` returns readings; if the device pushes changes, return `true` from `pushes` and send them from `watch` (find its reports with `GearDiagnostics.exe --listen`); otherwise it is polled every 10 minutes. Names come from the device (USB product string or HID++ name), and a headset reading's `sound_device` is matched against Windows sound output names, so nothing else needs to change. A new kind of gear (beyond headset and mouse) also needs a `DeviceKind` and a tray glyph. Protocol code never touches the UI; UI code never opens HID handles.
 
 ## Build and test
 

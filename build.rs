@@ -36,7 +36,7 @@ fn main() {
     res.compile().unwrap();
 }
 
-/// Compile the vendored Windows hidapi backend used by `native_devices`.
+/// Compile the vendored Windows hidapi backend used by `src/devices/hid.rs`.
 fn build_hidapi() {
     println!("cargo:rerun-if-changed=vendor/hidapi/windows/hid.c");
     cc::Build::new()

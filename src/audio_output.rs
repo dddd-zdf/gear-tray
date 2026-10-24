@@ -21,7 +21,6 @@ use windows::{
     },
 };
 
-const HEADSET_NAME: &str = "HyperX Cloud III S";
 const POLICY_CONFIG_CLIENT: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
 
 #[allow(non_snake_case)]
@@ -57,8 +56,8 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    fn is_headset(&self) -> bool {
-        self.name.contains(HEADSET_NAME)
+    fn matches(&self, sound_device: &str) -> bool {
+        self.name.contains(sound_device)
     }
 }
 
@@ -138,24 +137,28 @@ pub struct Decision {
     pub remember_speaker: Option<String>,
 }
 
-/// Picks the output for a headset connection change. A speaker chosen by the
-/// user is remembered; without one, the first ordinary output is used.
+/// Picks the output for a headset connection change. `headset_on` is the
+/// connected headset's sound device name, and `headsets` lists the sound
+/// device names of every known headset. A speaker chosen by the user is
+/// remembered; without one, the first ordinary output is used.
 pub fn decide(
-    headset_on: bool,
+    headset_on: Option<&str>,
+    headsets: &[String],
     outputs: &[Endpoint],
     current: Option<&str>,
     saved_speaker: Option<&str>,
 ) -> Decision {
+    let is_headset = |endpoint: &Endpoint| headsets.iter().any(|name| endpoint.matches(name));
     let current_endpoint = outputs.iter().find(|endpoint| Some(endpoint.id.as_str()) == current);
-    let current_is_headset = current_endpoint.is_some_and(Endpoint::is_headset);
+    let current_is_headset = current_endpoint.is_some_and(|endpoint| is_headset(endpoint));
     let remember_speaker = current_endpoint
-        .filter(|endpoint| !endpoint.is_headset())
+        .filter(|endpoint| !is_headset(endpoint))
         .map(|endpoint| endpoint.id.clone());
-    if headset_on {
+    if let Some(headset) = headset_on {
         let switch_to = outputs
             .iter()
-            .find(|endpoint| endpoint.is_headset())
-            .filter(|_| !current_is_headset)
+            .find(|endpoint| endpoint.matches(headset))
+            .filter(|endpoint| Some(endpoint.id.as_str()) != current)
             .cloned();
         return Decision { switch_to, remember_speaker };
     }
@@ -165,11 +168,11 @@ pub fn decide(
     }
     let switch_to = outputs
         .iter()
-        .find(|endpoint| Some(endpoint.id.as_str()) == saved_speaker && !endpoint.is_headset())
+        .find(|endpoint| Some(endpoint.id.as_str()) == saved_speaker && !is_headset(endpoint))
         .or_else(|| {
-            outputs.iter().find(|endpoint| {
-                !endpoint.is_headset() && !endpoint.name.contains("Hands-Free")
-            })
+            outputs
+                .iter()
+                .find(|endpoint| !is_headset(endpoint) && !endpoint.name.contains("Hands-Free"))
         })
         .cloned();
     Decision { switch_to, remember_speaker: None }
@@ -195,24 +198,31 @@ mod tests {
         decision.switch_to.as_ref().map(|endpoint| endpoint.id.as_str())
     }
 
+    const HEADSET: &str = "HyperX Cloud III S";
+
+    fn decide(on: bool, current: &str, saved: Option<&str>) -> Decision {
+        let headsets = [HEADSET.to_owned()];
+        super::decide(on.then_some(HEADSET), &headsets, &outputs(), Some(current), saved)
+    }
+
     #[test]
     fn headset_on_switches_and_remembers_speaker() {
-        let decision = decide(true, &outputs(), Some("desk"), None);
+        let decision = decide(true, "desk", None);
         assert_eq!(target(&decision), Some("headset"));
         assert_eq!(decision.remember_speaker.as_deref(), Some("desk"));
-        assert_eq!(target(&decide(true, &outputs(), Some("headset"), None)), None);
+        assert_eq!(target(&decide(true, "headset", None)), None);
     }
 
     #[test]
     fn headset_off_returns_to_saved_speaker_or_first_ordinary_output() {
-        assert_eq!(target(&decide(false, &outputs(), Some("headset"), Some("desk"))), Some("desk"));
-        assert_eq!(target(&decide(false, &outputs(), Some("headset"), Some("gone"))), Some("monitor"));
-        assert_eq!(target(&decide(false, &outputs(), Some("headset"), Some("headset"))), Some("monitor"));
+        assert_eq!(target(&decide(false, "headset", Some("desk"))), Some("desk"));
+        assert_eq!(target(&decide(false, "headset", Some("gone"))), Some("monitor"));
+        assert_eq!(target(&decide(false, "headset", Some("headset"))), Some("monitor"));
     }
 
     #[test]
     fn headset_off_keeps_a_manual_choice() {
-        let decision = decide(false, &outputs(), Some("desk"), Some("monitor"));
+        let decision = decide(false, "desk", Some("monitor"));
         assert_eq!(target(&decision), None);
         assert_eq!(decision.remember_speaker.as_deref(), Some("desk"));
     }

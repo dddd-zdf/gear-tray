@@ -22,7 +22,7 @@ use windows::{
     },
 };
 
-use crate::native_devices::PowerState;
+use crate::devices::PowerState;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct AlertState {
@@ -164,7 +164,7 @@ fn install_start_menu_shortcut(app_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{should_alert, AlertState};
-    use crate::native_devices::PowerState;
+    use crate::devices::PowerState;
 
     #[test]
     fn zero_disables_and_rearms_an_episode() {

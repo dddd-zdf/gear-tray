@@ -1,7 +1,7 @@
 use anyhow::Context;
 use winit::window::Theme;
 
-use crate::native_devices::{DeviceKind, PowerState};
+use crate::devices::{DeviceKind, PowerState};
 
 /// A device silhouette above a percentage, drawn on a pixel-aligned 16px grid.
 /// The doubled image stays crisp at the standard Windows tray size and on HiDPI.

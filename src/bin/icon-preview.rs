@@ -1,6 +1,6 @@
 //! Render the actual tray artwork at native sizes, with a larger inspection row.
 use gear_tray::{
-    native_devices::{DeviceKind, PowerState},
+    devices::{DeviceKind, PowerState},
     tray_icons::device_icon_rgba,
 };
 use winit::window::Theme;
