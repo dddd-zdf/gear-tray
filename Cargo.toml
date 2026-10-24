@@ -1,9 +1,9 @@
 [package]
 name = "battery-status"
-version = "3.6.1"
+version = "3.7.0"
 edition = "2024"
-authors = ["Aaro Luomanen"]
-description = "Displays a battery icon in the Windows system tray for wireless headsets."
+authors = ["Difei Zhao", "Aaro Luomanen"]
+description = "Windows tray battery indicator for a HyperX headset and Logitech mouse, with automatic audio output switching."
 license = "GPL-3.0-only"
 homepage = "https://github.com/dddd-zdf/battery-status"
 default-run = "battery-status-debug"
@@ -11,8 +11,6 @@ default-run = "battery-status-debug"
 [[bin]]
 name = "battery-diagnostics"
 path = "src/bin/diagnostics.rs"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
 name = "battery-status-debug"
@@ -22,36 +20,33 @@ path = "src/bin/debug.rs"
 anyhow = "1.0.102"
 log = "0.4.22"
 win32_notif = "0.15.2"
-serde = "1.0.219"
-serde_derive = "1.0.228"
-serde_json = "1.0.145"
 simplelog = { version = "0.12.2", features = ["paris"] }
-sys-locale = "0.3.2"
 tray-icon = "0.22.1"
 winit = "0.30.12"
 softbuffer = "0.4.8"
 tiny-skia = "0.11.4"
 fontdue = "0.9.3"
-winreg = { version = "0.56.0", features = ["serialization-serde"] }
-ureq = { version = "3.3.0", features = ["json"] }
+winreg = "0.56.0"
 windows = { version = "0.58", features = [
+    "Win32_Devices_FunctionDiscovery",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
+    "Win32_Media_Audio",
     "Win32_Storage_EnhancedStorage",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
     "Win32_System_LibraryLoader",
     "Win32_UI_Shell",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
-libc = "0.2.186"
+# The `interface` macro used for IPolicyConfig expands to `::windows_core`.
+windows-core = "0.58"
 
 [build-dependencies]
 winres = "0.1"
-cmake = "0.1.58"
-vcpkg = "0.2"
 cc = { version = "1.2.61", features = ["jobserver"] }
 
 [profile.release]

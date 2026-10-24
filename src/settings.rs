@@ -1,11 +1,16 @@
 use anyhow::{Context, Result};
 use winreg::enums::HKEY_CURRENT_USER;
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct Settings {
     /// Percentage at or below which a device raises one low-battery alert.
     /// Zero disables battery alerts.
     pub alert_threshold: u8,
+    /// Make the headset the default output while it is on, and return to the
+    /// speaker when it turns off.
+    pub auto_audio: bool,
+    /// Endpoint id of the last non-headset output in use.
+    pub speaker_endpoint: String,
 }
 
 impl Settings {
@@ -52,7 +57,16 @@ impl Settings {
             },
         };
 
-        let settings = Settings { alert_threshold };
+        let auto_audio = key
+            .get_value::<u32, _>("AutoAudioOutput")
+            .map_or(true, |value| value != 0);
+        let speaker_endpoint = key.get_value::<String, _>("SpeakerEndpoint").unwrap_or_default();
+
+        let settings = Settings {
+            alert_threshold,
+            auto_audio,
+            speaker_endpoint,
+        };
 
         log::debug!("Loaded settings: {:?}", settings);
         Ok(settings)
@@ -66,6 +80,10 @@ impl Settings {
 
         key.set_value("AlertThreshold", &u32::from(self.alert_threshold.min(100)))
             .context("saving alert threshold to registry")?;
+        key.set_value("AutoAudioOutput", &u32::from(self.auto_audio))
+            .context("saving audio switching preference")?;
+        key.set_value("SpeakerEndpoint", &self.speaker_endpoint)
+            .context("saving speaker output")?;
         Ok(())
     }
 }

@@ -5,10 +5,7 @@ use simplelog::{ConfigBuilder, TermLogger};
 fn main() {
     TermLogger::init(
         log::LevelFilter::Trace,
-        ConfigBuilder::new()
-            .add_filter_ignore_str("ureq")
-            .add_filter_ignore_str("rustls")
-            .build(),
+        ConfigBuilder::new().build(),
         simplelog::TerminalMode::Mixed,
         simplelog::ColorChoice::Auto,
     )

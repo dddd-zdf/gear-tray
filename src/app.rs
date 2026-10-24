@@ -14,6 +14,7 @@ use winit::{
 
 use crate::panel::{Panel, PanelAction};
 use crate::{
+    audio_output,
     native_devices::{DeviceKind, DeviceReading, PowerState},
     notify::Notifier,
     settings::Settings,
@@ -33,6 +34,7 @@ struct DeviceTray {
     last_text: String,
     quit: MenuItem,
     startup: CheckMenuItem,
+    auto_audio: CheckMenuItem,
 }
 
 pub struct AppState {
@@ -41,14 +43,16 @@ pub struct AppState {
     headset: DeviceTray,
     mouse: DeviceTray,
     readings: mpsc::Receiver<Vec<DeviceReading>>,
-    refresh: mpsc::Sender<()>,
+    refresh: mpsc::Sender<crate::Wake>,
     latest: Vec<DeviceReading>,
     panel: Option<Panel>,
+    /// Last headset connection state the sound output was matched to.
+    headset_on: Option<bool>,
 }
 
 pub fn run(
     readings: mpsc::Receiver<Vec<DeviceReading>>,
-    refresh: mpsc::Sender<()>,
+    refresh: mpsc::Sender<crate::Wake>,
 ) -> anyhow::Result<()> {
     let event_loop = EventLoop::<AppEvent>::with_user_event()
         .build()
@@ -70,11 +74,11 @@ pub fn run(
 impl AppState {
     fn new(
         readings: mpsc::Receiver<Vec<DeviceReading>>,
-        refresh: mpsc::Sender<()>,
+        refresh: mpsc::Sender<crate::Wake>,
     ) -> anyhow::Result<Self> {
         let settings = Settings::load().context("loading settings")?;
-        let headset = Self::new_device_tray(DeviceKind::Headset, "Headset")?;
-        let mouse = Self::new_device_tray(DeviceKind::Mouse, "Mouse")?;
+        let headset = Self::new_device_tray(DeviceKind::Headset, &settings)?;
+        let mouse = Self::new_device_tray(DeviceKind::Mouse, &settings)?;
         let notifier = Notifier::new()
             .map_err(|err| {
                 warn!("Notifications unavailable: {err:?}");
@@ -90,10 +94,11 @@ impl AppState {
             refresh,
             latest: Vec::new(),
             panel: None,
+            headset_on: None,
         })
     }
 
-    fn new_device_tray(kind: DeviceKind, _label: &str) -> anyhow::Result<DeviceTray> {
+    fn new_device_tray(kind: DeviceKind, settings: &Settings) -> anyhow::Result<DeviceTray> {
         let icon = tray_icons::generate_device_icon(
             kind,
             crate::system_theme(),
@@ -103,6 +108,9 @@ impl AppState {
         let menu = Menu::new();
         let startup = CheckMenuItem::new("Start with Windows", true, Settings::startup_enabled(), None);
         menu.append(&startup)?;
+        let auto_audio =
+            CheckMenuItem::new("Switch sound to headset", true, settings.auto_audio, None);
+        menu.append(&auto_audio)?;
         let quit = MenuItem::new("Quit", true, None);
         menu.append(&quit)?;
         let tray = TrayIconBuilder::new()
@@ -118,6 +126,7 @@ impl AppState {
             last_text: String::new(),
             quit,
             startup,
+            auto_audio,
         })
     }
 
@@ -127,7 +136,41 @@ impl AppState {
         if let Some(panel) = &mut self.panel {
             panel.set_readings(&readings);
         }
+        let headset_on = readings.iter().any(|reading| {
+            reading.device_kind == DeviceKind::Headset && reading.battery_percent.is_some()
+        });
+        if self.headset_on != Some(headset_on) {
+            self.headset_on = Some(headset_on);
+            if self.settings.auto_audio {
+                self.match_sound_output(headset_on);
+            }
+        }
         self.latest = readings;
+    }
+
+    /// Act only on connection changes, so a manual output choice holds until
+    /// the headset next turns on or off.
+    fn match_sound_output(&mut self, headset_on: bool) {
+        let (outputs, current) = match audio_output::outputs() {
+            Ok(outputs) => outputs,
+            Err(err) => return error!("listing sound outputs: {err:?}"),
+        };
+        let saved = Some(self.settings.speaker_endpoint.as_str()).filter(|id| !id.is_empty());
+        let decision = audio_output::decide(headset_on, &outputs, current.as_deref(), saved);
+        if let Some(speaker) = decision.remember_speaker {
+            if speaker != self.settings.speaker_endpoint {
+                self.settings.speaker_endpoint = speaker;
+                if let Err(err) = self.settings.save() {
+                    error!("saving settings: {err:?}");
+                }
+            }
+        }
+        if let Some(target) = decision.switch_to {
+            match audio_output::set_default(&target.id) {
+                Ok(()) => info!("Switched sound output to {}", target.name),
+                Err(err) => error!("switching sound output to {}: {err:?}", target.name),
+            }
+        }
     }
 
     fn apply_kind(&mut self, readings: &[DeviceReading], kind: DeviceKind) {
@@ -250,6 +293,25 @@ impl ApplicationHandler<AppEvent> for AppState {
                 self.mouse.startup.set_checked(enabled);
             }
             AppEvent::Menu(event)
+                if event.id == self.headset.auto_audio.id()
+                    || event.id == self.mouse.auto_audio.id() =>
+            {
+                let enabled = if event.id == self.headset.auto_audio.id() {
+                    self.headset.auto_audio.is_checked()
+                } else {
+                    self.mouse.auto_audio.is_checked()
+                };
+                self.headset.auto_audio.set_checked(enabled);
+                self.mouse.auto_audio.set_checked(enabled);
+                self.settings.auto_audio = enabled;
+                if let Err(err) = self.settings.save() {
+                    error!("saving settings: {err:?}");
+                }
+                if let (true, Some(headset_on)) = (enabled, self.headset_on) {
+                    self.match_sound_output(headset_on);
+                }
+            }
+            AppEvent::Menu(event)
                 if event.id == self.headset.quit.id() || event.id == self.mouse.quit.id() =>
             {
                 event_loop.exit()
@@ -281,7 +343,7 @@ impl ApplicationHandler<AppEvent> for AppState {
             .and_then(|panel| panel.handle_event(&event));
         match action {
             Some(PanelAction::Refresh) => {
-                let _ = self.refresh.send(());
+                let _ = self.refresh.send(crate::Wake::Refresh);
             }
             Some(PanelAction::SetAlertThreshold(threshold)) => {
                 self.settings.alert_threshold = threshold.min(100);

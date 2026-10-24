@@ -1,7 +1,7 @@
 //! Native, read-only battery polling for the devices this application owns.
 //!
 //! This module deliberately has no tray/UI dependency.  It uses the copy of
-//! hidapi that `build.rs` already compiles for headsetcontrol.  The HID++
+//! hidapi that `build.rs` compiles.  The HID++
 //! writes below are request/response queries only; none changes a setting on
 //! the receiver or mouse.
 
@@ -114,7 +114,7 @@ struct HidppTransport {
 /// represented as an offline reading when a receiver/headset was discovered;
 /// other HID devices are ignored.
 pub fn poll_devices() -> Vec<DeviceReading> {
-    let mut readings = poll_hyperx();
+    let mut readings = poll_headset();
     readings.extend(poll_logitech());
     readings
 }
@@ -145,6 +145,81 @@ pub fn diagnostic_report() -> Vec<DeviceDiagnostic> {
         }
     }
     diagnostics
+}
+
+/// Report header the Cloud III S dongle pushes when the headset turns on or
+/// off; the next byte is 1 for on and 0 for off. Observed on this PC.
+const HYPERX_LINK_REPORT: [u8; 5] = [0x0d, 0x02, 0x03, 0x00, 0x0c];
+
+fn parse_headset_link(report: &[u8]) -> Option<bool> {
+    (report.len() > 5 && report[..5] == HYPERX_LINK_REPORT).then(|| report[5] != 0)
+}
+
+/// Blocks forever, calling `on_change` whenever the dongle reports the headset
+/// turning on or off. Survives the dongle being unplugged and plugged back in.
+pub fn watch_headset_link(mut on_change: impl FnMut(bool)) {
+    loop {
+        let device = enumerate(HYPERX_VID, HYPERX_CLOUD_III_S_PID)
+            .into_iter()
+            .find(|info| info.usage_page == 0x01c0 && info.usage == 1)
+            .and_then(|info| open_path(&info.path));
+        let Some(device) = device else {
+            std::thread::sleep(Duration::from_secs(5));
+            continue;
+        };
+        loop {
+            let mut report = [0u8; 64];
+            // SAFETY: device is valid and the buffer outlives the call.
+            let read =
+                unsafe { hid_read_timeout(device.0, report.as_mut_ptr(), report.len(), 1000) };
+            if read < 0 {
+                log::info!("Headset dongle stopped responding; waiting for it");
+                break;
+            }
+            if let Some(on) = parse_headset_link(&report[..read as usize]) {
+                log::info!("Headset dongle reported headset {}", if on { "on" } else { "off" });
+                on_change(on);
+            }
+        }
+    }
+}
+
+/// Print every input report the headset dongle sends on its own for
+/// `duration`. Sends nothing; used to look for connection push reports.
+pub fn watch_headset_reports(duration: Duration) {
+    let start = Instant::now();
+    let threads: Vec<_> = enumerate(HYPERX_VID, HYPERX_CLOUD_III_S_PID)
+        .into_iter()
+        .map(|info| {
+            std::thread::spawn(move || {
+                let label = format!("page={:04x} usage={:02x}", info.usage_page, info.usage);
+                let Some(device) = open_path(&info.path) else {
+                    println!("{label}: cannot open");
+                    return;
+                };
+                println!("{label}: listening");
+                while start.elapsed() < duration {
+                    let mut report = [0u8; 64];
+                    // SAFETY: device is valid and the buffer outlives the call.
+                    let read = unsafe {
+                        hid_read_timeout(device.0, report.as_mut_ptr(), report.len(), 250)
+                    };
+                    if read < 0 {
+                        println!("{label}: read error");
+                        return;
+                    }
+                    if read > 0 {
+                        let bytes: Vec<String> =
+                            report[..read as usize].iter().map(|b| format!("{b:02x}")).collect();
+                        println!("{:7.2}s {label}: {}", start.elapsed().as_secs_f32(), bytes.join(" "));
+                    }
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        let _ = thread.join();
+    }
 }
 
 #[derive(Clone)]
@@ -206,7 +281,8 @@ fn open_path(path: &str) -> Option<HidHandle> {
     (!handle.is_null()).then_some(HidHandle(handle))
 }
 
-fn poll_hyperx() -> Vec<DeviceReading> {
+/// Poll only the headset; cheap enough to run every few seconds.
+pub fn poll_headset() -> Vec<DeviceReading> {
     enumerate(HYPERX_VID, HYPERX_CLOUD_III_S_PID)
         .into_iter()
         .filter(|info| info.usage_page == 0x01c0 && info.usage == 1)
@@ -550,6 +626,20 @@ fn voltage_to_percent(mv: u16) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_headset_link_reports_seen_on_cloud_iii_s() {
+        let mut report = [0u8; 64];
+        report[..6].copy_from_slice(&[0x0d, 0x02, 0x03, 0x00, 0x0c, 0x01]);
+        assert_eq!(parse_headset_link(&report), Some(true));
+        report[5] = 0;
+        assert_eq!(parse_headset_link(&report), Some(false));
+        // Sent just before "on"; not a link state.
+        report[4] = 0x0d;
+        assert_eq!(parse_headset_link(&report), None);
+        // Battery query reply.
+        assert_eq!(parse_headset_link(&[0x0c, 0x02, 0x03, 0x01, 0x00, 0x06, 93]), None);
+    }
 
     #[test]
     fn accepts_dex_long_reply_and_rejects_unrelated_or_truncated_reports() {
