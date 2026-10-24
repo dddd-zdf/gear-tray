@@ -1,14 +1,14 @@
-use battery_status::{audio_output, native_devices};
+use gear_tray::{audio_output, native_devices};
 
 fn main() {
     let mut args = std::env::args().skip(1);
     if args.next().as_deref() == Some("--listen") {
         let seconds = args.next().and_then(|s| s.parse().ok()).unwrap_or(60);
-        println!("Listening to headset reports for {seconds}s; nothing is sent.");
-        native_devices::watch_headset_reports(std::time::Duration::from_secs(seconds));
+        println!("Listening to device reports for {seconds}s; nothing is sent.");
+        native_devices::watch_reports(std::time::Duration::from_secs(seconds));
         return;
     }
-    println!("Battery Status — native HID diagnostics");
+    println!("Gear Tray — native HID diagnostics");
     println!("Battery queries only; no device settings are changed.\n");
     for device in native_devices::diagnostic_report() {
         println!("{device:#?}");

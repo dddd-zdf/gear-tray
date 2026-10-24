@@ -147,52 +147,167 @@ pub fn diagnostic_report() -> Vec<DeviceDiagnostic> {
     diagnostics
 }
 
-/// Report header the Cloud III S dongle pushes when the headset turns on or
-/// off; the next byte is 1 for on and 0 for off. Observed on this PC.
-const HYPERX_LINK_REPORT: [u8; 5] = [0x0d, 0x02, 0x03, 0x00, 0x0c];
-
-fn parse_headset_link(report: &[u8]) -> Option<bool> {
-    (report.len() > 5 && report[..5] == HYPERX_LINK_REPORT).then(|| report[5] != 0)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadsetEvent {
+    /// The headset turned on (true) or off.
+    Link(bool),
+    /// The battery level changed to this percentage.
+    Battery(u8),
+    /// The dongle was plugged back in; pushes may have been missed.
+    Reconnected,
 }
 
-/// Blocks forever, calling `on_change` whenever the dongle reports the headset
-/// turning on or off. Survives the dongle being unplugged and plugged back in.
-pub fn watch_headset_link(mut on_change: impl FnMut(bool)) {
+/// Reports the Cloud III S dongle pushes on its own, observed on this PC:
+/// `0d 02 03 00 0c <1 on | 0 off>` and `0d 02 03 00 01 <percent>`.
+fn parse_headset_event(report: &[u8]) -> Option<HeadsetEvent> {
+    match report {
+        [0x0d, 0x02, 0x03, 0x00, 0x0c, on, ..] => Some(HeadsetEvent::Link(*on != 0)),
+        [0x0d, 0x02, 0x03, 0x00, 0x01, level, ..] if *level <= 100 => {
+            Some(HeadsetEvent::Battery(*level))
+        }
+        _ => None,
+    }
+}
+
+/// Blocks forever, calling `on_event` for the headset's on/off and battery
+/// pushes. Survives the dongle being unplugged and plugged back in.
+pub fn watch_headset_events(mut on_event: impl FnMut(HeadsetEvent)) {
+    watch_interface(
+        HYPERX_VID,
+        HYPERX_CLOUD_III_S_PID,
+        |info| info.usage_page == 0x01c0 && info.usage == 1,
+        |report| match report {
+            Some(report) => {
+                if let Some(event) = parse_headset_event(report) {
+                    log::info!("Headset dongle reported {event:?}");
+                    on_event(event);
+                }
+            }
+            None => on_event(HeadsetEvent::Reconnected),
+        },
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseEvent {
+    /// The receiver reported the mouse connecting (true) or disconnecting.
+    Link(bool),
+    /// The mouse sent an unsolicited HID++ 2.0 event, such as its battery
+    /// status (sent on reconnect and when the level or charging changes).
+    Changed,
+    /// The receiver was plugged back in; pushes may have been missed.
+    Reconnected,
+}
+
+fn parse_mouse_event(report: &[u8]) -> Option<MouseEvent> {
+    match report {
+        // HID++ 1.0 device connection notification; bit 6 means link lost.
+        [0x10, _, 0x41, _, flags, ..] => Some(MouseEvent::Link(flags & 0x40 == 0)),
+        // HID++ 2.0 event: a real feature index with software id 0. Replies to
+        // our own queries always carry a non-zero software id.
+        [0x11, _, index, 0x00, ..] if !matches!(index, 0x00 | 0x8f | 0xff) => {
+            Some(MouseEvent::Changed)
+        }
+        _ => None,
+    }
+}
+
+/// Blocks forever, calling `on_event` for mouse connection and battery pushes
+/// from the Logitech receiver. Connection notices arrive on the short HID++
+/// interface and feature events on the long one, so both are watched.
+pub fn watch_mouse_events(on_event: impl Fn(MouseEvent) + Clone + Send + 'static) {
+    let threads: Vec<_> = [HIDPP_SHORT_USAGE, 2]
+        .into_iter()
+        .map(|usage| {
+            let on_event = on_event.clone();
+            std::thread::spawn(move || {
+                watch_interface(
+                    LOGITECH_VID,
+                    0,
+                    move |info| {
+                        info.usage_page & HIDPP_SHORT_USAGE_PAGE_MASK
+                            == HIDPP_SHORT_USAGE_PAGE_MASK
+                            && info.usage == usage
+                    },
+                    |report| match report {
+                        Some(report) => {
+                            if let Some(event) = parse_mouse_event(report) {
+                                on_event(event);
+                            }
+                        }
+                        None => on_event(MouseEvent::Reconnected),
+                    },
+                )
+            })
+        })
+        .collect();
+    for thread in threads {
+        let _ = thread.join();
+    }
+}
+
+/// Read reports from the first matching interface forever, reopening it after
+/// the device is unplugged. `on_report(None)` means it was reopened.
+fn watch_interface(
+    vid: u16,
+    pid: u16,
+    matches: impl Fn(&EnumeratedDevice) -> bool,
+    mut on_report: impl FnMut(Option<&[u8]>),
+) {
+    let mut lost = false;
     loop {
-        let device = enumerate(HYPERX_VID, HYPERX_CLOUD_III_S_PID)
+        let device = enumerate(vid, pid)
             .into_iter()
-            .find(|info| info.usage_page == 0x01c0 && info.usage == 1)
+            .find(|info| matches(info))
             .and_then(|info| open_path(&info.path));
         let Some(device) = device else {
+            lost = true;
             std::thread::sleep(Duration::from_secs(5));
             continue;
         };
+        if std::mem::take(&mut lost) {
+            on_report(None);
+        }
         loop {
             let mut report = [0u8; 64];
             // SAFETY: device is valid and the buffer outlives the call.
             let read =
                 unsafe { hid_read_timeout(device.0, report.as_mut_ptr(), report.len(), 1000) };
             if read < 0 {
-                log::info!("Headset dongle stopped responding; waiting for it");
+                log::info!("HID device {vid:04x}:{pid:04x} stopped responding; waiting for it");
+                lost = true;
                 break;
             }
-            if let Some(on) = parse_headset_link(&report[..read as usize]) {
-                log::info!("Headset dongle reported headset {}", if on { "on" } else { "off" });
-                on_change(on);
+            if read > 0 {
+                on_report(Some(&report[..read as usize]));
             }
         }
     }
 }
 
-/// Print every input report the headset dongle sends on its own for
-/// `duration`. Sends nothing; used to look for connection push reports.
-pub fn watch_headset_reports(duration: Duration) {
+/// Poll only the mouse; used after the receiver reports a change.
+pub fn poll_mouse() -> Vec<DeviceReading> {
+    poll_logitech()
+}
+
+/// Print every input report the headset dongle and the Logitech receiver's
+/// HID++ interfaces send on their own for `duration`. Sends nothing; used to
+/// look for push reports.
+pub fn watch_reports(duration: Duration) {
     let start = Instant::now();
-    let threads: Vec<_> = enumerate(HYPERX_VID, HYPERX_CLOUD_III_S_PID)
+    let hyperx = enumerate(HYPERX_VID, HYPERX_CLOUD_III_S_PID)
         .into_iter()
-        .map(|info| {
+        .map(|info| ("hyperx", info));
+    let logitech = enumerate(LOGITECH_VID, 0)
+        .into_iter()
+        .filter(|info| info.usage_page & HIDPP_SHORT_USAGE_PAGE_MASK == HIDPP_SHORT_USAGE_PAGE_MASK)
+        .map(|info| ("logitech", info));
+    let threads: Vec<_> = hyperx
+        .chain(logitech)
+        .map(|(source, info)| {
             std::thread::spawn(move || {
-                let label = format!("page={:04x} usage={:02x}", info.usage_page, info.usage);
+                let label =
+                    format!("{source} page={:04x} usage={:02x}", info.usage_page, info.usage);
                 let Some(device) = open_path(&info.path) else {
                     println!("{label}: cannot open");
                     return;
@@ -628,17 +743,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_headset_link_reports_seen_on_cloud_iii_s() {
+    fn parses_mouse_pushes_seen_on_pro_x_2_dex() {
+        let off = [0x10, 0x01, 0x41, 0x11, 0x62, 0xb8, 0x40];
+        let on = [0x10, 0x01, 0x41, 0x11, 0xa2, 0xb8, 0x40];
+        assert_eq!(parse_mouse_event(&off), Some(MouseEvent::Link(false)));
+        assert_eq!(parse_mouse_event(&on), Some(MouseEvent::Link(true)));
+        let mut battery = [0u8; 20];
+        battery[..6].copy_from_slice(&[0x11, 0x01, 0x06, 0x00, 0x37, 0x04]);
+        assert_eq!(parse_mouse_event(&battery), Some(MouseEvent::Changed));
+        // Our own battery query reply (software id 0x0a) and ping reply.
+        battery[3] = 0x1a;
+        assert_eq!(parse_mouse_event(&battery), None);
+        let mut ping = [0u8; 20];
+        ping[..7].copy_from_slice(&[0x11, 0x01, 0x00, 0x1a, 0x04, 0x02, 0x55]);
+        assert_eq!(parse_mouse_event(&ping), None);
+    }
+
+    #[test]
+    fn parses_headset_pushes_seen_on_cloud_iii_s() {
         let mut report = [0u8; 64];
         report[..6].copy_from_slice(&[0x0d, 0x02, 0x03, 0x00, 0x0c, 0x01]);
-        assert_eq!(parse_headset_link(&report), Some(true));
+        assert_eq!(parse_headset_event(&report), Some(HeadsetEvent::Link(true)));
         report[5] = 0;
-        assert_eq!(parse_headset_link(&report), Some(false));
+        assert_eq!(parse_headset_event(&report), Some(HeadsetEvent::Link(false)));
         // Sent just before "on"; not a link state.
         report[4] = 0x0d;
-        assert_eq!(parse_headset_link(&report), None);
-        // Battery query reply.
-        assert_eq!(parse_headset_link(&[0x0c, 0x02, 0x03, 0x01, 0x00, 0x06, 93]), None);
+        assert_eq!(parse_headset_event(&report), None);
+        let battery = [0x0d, 0x02, 0x03, 0x00, 0x01, 0x5c, 0x0f, 0xdc];
+        assert_eq!(parse_headset_event(&battery), Some(HeadsetEvent::Battery(92)));
+        // Our own battery query reply.
+        assert_eq!(parse_headset_event(&[0x0c, 0x02, 0x03, 0x01, 0x00, 0x06, 93]), None);
     }
 
     #[test]

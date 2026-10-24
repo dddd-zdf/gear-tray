@@ -1,5 +1,5 @@
 //! Render the actual tray artwork at native sizes, with a larger inspection row.
-use battery_status::{
+use gear_tray::{
     native_devices::{DeviceKind, PowerState},
     tray_icons::device_icon_rgba,
 };

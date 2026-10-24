@@ -1,4 +1,4 @@
-use battery_status::run;
+use gear_tray::run;
 use log::error;
 use simplelog::{ConfigBuilder, TermLogger};
 

@@ -14,14 +14,41 @@ pub struct Settings {
 }
 
 impl Settings {
-    const KEY: &'static str = "Software\\BatteryStatus";
+    const KEY: &'static str = "Software\\GearTray";
     const RUN_KEY: &'static str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    const RUN_VALUE: &'static str = "GearTray";
+    /// Registry names used before the app was renamed from Battery Status.
+    const OLD_KEY: &'static str = "Software\\BatteryStatus";
+    const OLD_RUN_VALUE: &'static str = "BatteryStatus";
 
     pub fn startup_enabled() -> bool {
         winreg::RegKey::predef(HKEY_CURRENT_USER)
             .open_subkey(Self::RUN_KEY)
-            .and_then(|key| key.get_value::<String, _>("BatteryStatus"))
+            .and_then(|key| key.get_value::<String, _>(Self::RUN_VALUE))
             .is_ok_and(|value| !value.is_empty())
+    }
+
+    /// Carry preferences and the startup entry over from Battery Status, once.
+    fn migrate_from_old_name() -> Result<()> {
+        let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(old) = hkcu.open_subkey(Self::OLD_KEY) {
+            let (key, _) = hkcu.create_subkey(Self::KEY).context("accessing registry key")?;
+            for value in old.enum_values().flatten() {
+                let (name, data) = value;
+                if key.get_raw_value(&name).is_err() {
+                    key.set_raw_value(&name, &data).context("copying old setting")?;
+                }
+            }
+            hkcu.delete_subkey_all(Self::OLD_KEY).context("removing old settings")?;
+            log::info!("Moved settings from Battery Status");
+        }
+        let run = hkcu.open_subkey(Self::RUN_KEY);
+        if run.and_then(|key| key.get_value::<String, _>(Self::OLD_RUN_VALUE)).is_ok() {
+            Self::set_startup(true)?;
+            let (key, _) = hkcu.create_subkey(Self::RUN_KEY)?;
+            key.delete_value(Self::OLD_RUN_VALUE).context("removing old startup entry")?;
+        }
+        Ok(())
     }
 
     pub fn set_startup(enabled: bool) -> Result<()> {
@@ -30,10 +57,10 @@ impl Settings {
             .context("opening Windows startup settings")?;
         if enabled {
             let executable = std::env::current_exe().context("locating executable")?;
-            key.set_value("BatteryStatus", &format!("\"{}\"", executable.display()))
+            key.set_value(Self::RUN_VALUE, &format!("\"{}\"", executable.display()))
                 .context("enabling startup")?;
         } else {
-            match key.delete_value("BatteryStatus") {
+            match key.delete_value(Self::RUN_VALUE) {
                 Ok(()) => {},
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
                 Err(error) => return Err(error).context("disabling startup"),
@@ -43,6 +70,9 @@ impl Settings {
     }
 
     pub fn load() -> Result<Self> {
+        if let Err(err) = Self::migrate_from_old_name() {
+            log::warn!("Could not move settings from Battery Status: {err:?}");
+        }
         let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
         let (key, _) = hkcu
             .create_subkey(Self::KEY)

@@ -5,10 +5,10 @@ fn main() {
 
     let mut res = winres::WindowsResource::new();
     res.set_icon("src/icons/main.ico");
-    res.set("FileDescription", "Battery Status");
-    res.set("ProductName", "Battery Status");
-    res.set("InternalName", "BatteryStatus");
-    res.set("OriginalFilename", "BatteryStatus.exe");
+    res.set("FileDescription", "Gear Tray");
+    res.set("ProductName", "Gear Tray");
+    res.set("InternalName", "GearTray");
+    res.set("OriginalFilename", "GearTray.exe");
 
     // Application manifest for dark mode support
     res.set_manifest(r#"

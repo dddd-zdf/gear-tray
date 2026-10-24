@@ -130,26 +130,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "battery-status"
-version = "3.7.0"
-dependencies = [
- "anyhow",
- "cc",
- "fontdue",
- "log",
- "simplelog",
- "softbuffer",
- "tiny-skia",
- "tray-icon",
- "win32_notif",
- "windows 0.58.0",
- "windows-core 0.58.0",
- "winit",
- "winreg",
- "winres",
-]
-
-[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -744,6 +724,26 @@ dependencies = [
  "pango-sys",
  "pkg-config",
  "system-deps",
+]
+
+[[package]]
+name = "gear-tray"
+version = "3.7.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "fontdue",
+ "log",
+ "simplelog",
+ "softbuffer",
+ "tiny-skia",
+ "tray-icon",
+ "win32_notif",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+ "winit",
+ "winreg",
+ "winres",
 ]
 
 [[package]]

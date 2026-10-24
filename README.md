@@ -1,22 +1,33 @@
-# Battery Status
+# Gear Tray
 
-A small Windows tray indicator for HyperX Cloud III S Wireless and Logitech PRO X SUPERLIGHT 2 DEX. Adapted from [aarol/headset-battery-indicator](https://github.com/aarol/headset-battery-indicator), with device-specific tray icons and a compact battery panel.
+A small Windows tray app for HyperX Cloud III S Wireless and Logitech PRO X SUPERLIGHT 2 DEX: battery levels for both, and sound that follows the headset. Formerly Battery Status. Adapted from [aarol/headset-battery-indicator](https://github.com/aarol/headset-battery-indicator), with device-specific tray icons and a compact battery panel.
 
 ## Run
 
-Open `dist/BatteryStatus.exe`. It runs in the notification area without a main window. Windows may initially put the icons in the tray overflow menu.
+Open `dist/GearTray.exe`. It runs in the notification area without a main window. Windows may initially put the icons in the tray overflow menu.
 
-There is one icon for the headset and one for the mouse. Left-click either icon to open the compact battery panel. Set the alert threshold with the minus/plus buttons, which adjust it by 10 percentage points per click, or click the value and type an exact percentage from 0 to 100. 0% turns alerts off; a device alerts once when its battery is at or below the threshold. Preferences are saved automatically. Refresh is in the bottom-right corner. Right-click either tray icon to toggle **Start with Windows**, toggle **Switch sound to headset**, or select **Quit** to exit. Logs are stored in battery-status.log beside the executable. Readings refresh in the background every 10 minutes, with a 2-second retry interval when the mouse reading is unavailable. Disconnected or unknown readings are not shown as a measured zero.
+There is one icon for the headset and one for the mouse. Left-click either icon to open the compact battery panel. Set the alert threshold with the minus/plus buttons, which adjust it by 10 percentage points per click, or click the value and type an exact percentage from 0 to 100. 0% turns alerts off; a device alerts once when its battery is at or below the threshold. Preferences are saved automatically. Refresh is in the bottom-right corner. Right-click either tray icon to toggle **Start with Windows**, toggle **Switch sound to headset**, or select **Quit** to exit. Logs are stored in gear-tray.log beside the executable. Disconnected or unknown readings are not shown as a measured zero.
 
-**Switch sound to headset** (on by default) makes the headset the default Windows output the moment it turns on, and returns to the speaker when it turns off. The speaker is whichever non-headset output was in use before; without one, the first ordinary output (Bluetooth hands-free outputs are skipped). The app acts only when the headset turns on or off, so an output you pick by hand stays until the next change. The headset's audio device stays "active" in Windows whenever the dongle is plugged in, so on/off comes from the dongle's own HID report (`0d 02 03 00 0c 01` on, `… 0c 00` off) rather than from Windows audio events.
+There is no polling timer. Both devices push changes on their own, and the tray updates the moment they arrive:
 
-`dist/BatteryDiagnostics.exe` prints native HID detection and readings in a console. It uses the same device module as the UI. Run it from PowerShell to keep the output visible:
+| Device | Push | Meaning |
+|---|---|---|
+| Headset dongle | `0d 02 03 00 0c 01` / `… 0c 00` | headset on / off |
+| Headset dongle | `0d 02 03 00 01 <percent>` | new battery level |
+| Logitech receiver | `10 <slot> 41 …` (byte 4 bit 6 set = link lost) | mouse on / off |
+| Mouse | HID++ 2.0 event, software id 0 (battery feature `0x1004`) | battery or charging change; the app re-reads the mouse |
+
+Devices are read in full only at startup, on Refresh, and when the dongle or receiver is plugged back in. These reports were observed on this PC with `GearDiagnostics.exe --listen`; they are not from published documentation.
+
+**Switch sound to headset** (on by default) makes the headset the default Windows output the moment it turns on, and returns to the speaker when it turns off. The speaker is whichever non-headset output was in use before; without one, the first ordinary output (Bluetooth hands-free outputs are skipped). The app acts only when the headset turns on or off, so an output you pick by hand stays until the next change. The headset's audio device stays "active" in Windows whenever the dongle is plugged in, so on/off comes from the dongle's own push report rather than from Windows audio events.
+
+`dist/GearDiagnostics.exe` prints native HID detection and readings in a console. It uses the same device module as the UI. Run it from PowerShell to keep the output visible:
 
 ```powershell
-./dist/BatteryDiagnostics.exe
+./dist/GearDiagnostics.exe
 ```
 
-It also lists sound outputs (`*` marks the default). `./dist/BatteryDiagnostics.exe --listen 60` prints every report the headset dongle sends on its own for 60 seconds, without sending anything.
+It also lists sound outputs (`*` marks the default). `./dist/GearDiagnostics.exe --listen 60` prints every report the headset dongle and the Logitech receiver send on their own for 60 seconds, without sending anything.
 
 No vendor application or administrator account is intended to be required for normal HID access. The supported path is the USB wireless receiver (and supported Logitech wired HID connections); Bluetooth is not implemented.
 
@@ -25,7 +36,7 @@ The headset reports a battery percentage but its referenced protocol does not do
 ## Modules
 
 - `src/native_devices.rs`: device discovery, HID transport, battery protocol handling and plain reading types. No tray or window dependencies in this module.
-- `src/lib.rs`: starts the polling worker and the headset on/off listener, and passes readings to the UI.
+- `src/lib.rs`: starts the device worker and the push listeners for both devices, and passes readings to the UI.
 - `src/audio_output.rs`: lists Windows sound outputs, changes the default, and decides which output fits the headset state.
 - `src/app.rs`: application controller, tray lifecycle, readings and panel actions.
 - `src/panel.rs`: popup layout, drawing and input handling.
@@ -50,7 +61,7 @@ The script uses the workspace-local Rust installation in `.tools` when present, 
 
 This project builds on the work of the following authors and communities:
 
-- **[aarol/headset-battery-indicator](https://github.com/aarol/headset-battery-indicator)** by Aaro Luomanen — the original application foundation and UI inspiration. Battery Status retains the original Git history and adapts its Windows tray infrastructure.
+- **[aarol/headset-battery-indicator](https://github.com/aarol/headset-battery-indicator)** by Aaro Luomanen — the original application foundation and UI inspiration. Gear Tray retains the original Git history and adapts its Windows tray infrastructure.
 - **[auto94/HyperX-Cloud-2-Battery-Monitor](https://github.com/auto94/HyperX-Cloud-2-Battery-Monitor)** — the reference for HyperX headset battery communication, including the Cloud III S Wireless protocol used here.
 - **[andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery)** — the reference for Logitech native HID/HID++ device discovery and battery queries, used to develop support for the PRO X 2 DEX.
 

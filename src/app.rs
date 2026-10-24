@@ -26,6 +26,7 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 enum AppEvent {
     Tray(TrayIconEvent),
     Menu(MenuEvent),
+    Readings(Vec<DeviceReading>),
 }
 
 struct DeviceTray {
@@ -42,7 +43,6 @@ pub struct AppState {
     notifier: Option<Notifier>,
     headset: DeviceTray,
     mouse: DeviceTray,
-    readings: mpsc::Receiver<Vec<DeviceReading>>,
     refresh: mpsc::Sender<crate::Wake>,
     latest: Vec<DeviceReading>,
     panel: Option<Panel>,
@@ -65,17 +65,23 @@ pub fn run(
     MenuEvent::set_event_handler(Some(move |event| {
         let _ = menu_proxy.send_event(AppEvent::Menu(event));
     }));
-    let mut app = AppState::new(readings, refresh)?;
+    // Wake the event loop as soon as readings arrive, so sound switches promptly.
+    let readings_proxy = event_loop.create_proxy();
+    std::thread::spawn(move || {
+        while let Ok(readings) = readings.recv() {
+            if readings_proxy.send_event(AppEvent::Readings(readings)).is_err() {
+                break;
+            }
+        }
+    });
+    let mut app = AppState::new(refresh)?;
     event_loop
         .run_app(&mut app)
         .context("running tray application")
 }
 
 impl AppState {
-    fn new(
-        readings: mpsc::Receiver<Vec<DeviceReading>>,
-        refresh: mpsc::Sender<crate::Wake>,
-    ) -> anyhow::Result<Self> {
+    fn new(refresh: mpsc::Sender<crate::Wake>) -> anyhow::Result<Self> {
         let settings = Settings::load().context("loading settings")?;
         let headset = Self::new_device_tray(DeviceKind::Headset, &settings)?;
         let mouse = Self::new_device_tray(DeviceKind::Mouse, &settings)?;
@@ -90,7 +96,6 @@ impl AppState {
             notifier,
             headset,
             mouse,
-            readings,
             refresh,
             latest: Vec::new(),
             panel: None,
@@ -262,9 +267,6 @@ impl ApplicationHandler<AppEvent> for AppState {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        while let Ok(readings) = self.readings.try_recv() {
-            self.apply_readings(readings);
-        }
         if let Some(panel) = &mut self.panel {
             panel.tick();
         }
@@ -277,6 +279,7 @@ impl ApplicationHandler<AppEvent> for AppState {
     }
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
         match event {
+            AppEvent::Readings(readings) => self.apply_readings(readings),
             AppEvent::Menu(event)
                 if event.id == self.headset.startup.id() || event.id == self.mouse.startup.id() =>
             {

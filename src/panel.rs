@@ -66,7 +66,7 @@ impl Panel {
         let window = Rc::new(
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("Battery Status")
+                    .with_title("Gear Tray")
                     .with_inner_size(LogicalSize::new(WIDTH, HEIGHT))
                     .with_resizable(false)
                     .with_decorations(false)

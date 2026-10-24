@@ -103,7 +103,7 @@ impl Notifier {
 pub fn register_notifications_id() -> Result<String> {
     // An unpackaged desktop process needs an All Programs shortcut with this
     // exact AUMID before Windows will show its toast notifications.
-    let app_id = "BatteryStatus.App";
+    let app_id = "GearTray.App";
     unsafe {
         SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(app_id))
             .context("SetCurrentProcessExplicitAppUserModelID")?;
@@ -126,7 +126,9 @@ fn install_start_menu_shortcut(app_id: &str) -> Result<()> {
         let programs_text = unsafe { programs.to_string() };
         unsafe { CoTaskMemFree(Some(programs.0.cast())) };
         let programs = programs_text.context("reading Start menu Programs folder")?;
-        let shortcut_path = std::path::Path::new(&programs).join("Battery Status.lnk");
+        // Shortcut from before the rename to Gear Tray.
+        let _ = std::fs::remove_file(std::path::Path::new(&programs).join("Battery Status.lnk"));
+        let shortcut_path = std::path::Path::new(&programs).join("Gear Tray.lnk");
         let executable = std::env::current_exe().context("locating running executable")?;
         let executable = HSTRING::from(executable.to_string_lossy().as_ref());
         let shortcut = HSTRING::from(shortcut_path.to_string_lossy().as_ref());
@@ -136,7 +138,7 @@ fn install_start_menu_shortcut(app_id: &str) -> Result<()> {
                 .context("creating Start menu shortcut")?;
             link.SetPath(&executable)
                 .context("setting shortcut target")?;
-            link.SetDescription(&HSTRING::from("Battery Status"))
+            link.SetDescription(&HSTRING::from("Gear Tray"))
                 .context("setting shortcut description")?;
 
             let store: IPropertyStore = link.cast().context("opening shortcut properties")?;

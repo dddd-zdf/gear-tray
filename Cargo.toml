@@ -1,19 +1,19 @@
 [package]
-name = "battery-status"
+name = "gear-tray"
 version = "3.7.0"
 edition = "2024"
 authors = ["Difei Zhao", "Aaro Luomanen"]
 description = "Windows tray battery indicator for a HyperX headset and Logitech mouse, with automatic audio output switching."
 license = "GPL-3.0-only"
-homepage = "https://github.com/dddd-zdf/battery-status"
-default-run = "battery-status-debug"
+homepage = "https://github.com/dddd-zdf/gear-tray"
+default-run = "gear-tray-debug"
 
 [[bin]]
-name = "battery-diagnostics"
+name = "gear-diagnostics"
 path = "src/bin/diagnostics.rs"
 
 [[bin]]
-name = "battery-status-debug"
+name = "gear-tray-debug"
 path = "src/bin/debug.rs"
 
 [dependencies]
