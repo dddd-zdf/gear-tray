@@ -21,6 +21,8 @@ Devices are read in full only at startup, on Refresh, and when the dongle or rec
 
 **Switch sound to headset** (on by default) makes the headset the default Windows output the moment it turns on, and returns to the speaker when it turns off. The speaker is whichever non-headset output was in use before; without one, the first ordinary output (Bluetooth hands-free outputs are skipped). The app acts only when the headset turns on or off, so an output you pick by hand stays until the next change. The headset's audio device stays "active" in Windows whenever the dongle is plugged in, so on/off comes from the dongle's own push report rather than from Windows audio events.
 
+To keep the app off an output that has no speakers (for example a monitor that another app uses as a silent output), add its endpoint id to the multi-string registry value `IgnoredOutputs` under `HKEY_CURRENT_USER\Software\GearTray`, then restart the app. GearDiagnostics.exe lists every output's id. An ignored output is never switched to and never remembered as the speaker.
+
 `dist/GearDiagnostics.exe` prints native HID detection and readings in a console. It uses the same device module as the UI. Run it from PowerShell to keep the output visible:
 
 ```powershell

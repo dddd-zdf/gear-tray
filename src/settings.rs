@@ -11,6 +11,9 @@ pub struct Settings {
     pub auto_audio: bool,
     /// Endpoint id of the last non-headset output in use.
     pub speaker_endpoint: String,
+    /// Endpoint ids never used as the speaker, such as a monitor without
+    /// speakers. Set by hand in the registry.
+    pub ignored_outputs: Vec<String>,
 }
 
 impl Settings {
@@ -91,11 +94,13 @@ impl Settings {
             .get_value::<u32, _>("AutoAudioOutput")
             .map_or(true, |value| value != 0);
         let speaker_endpoint = key.get_value::<String, _>("SpeakerEndpoint").unwrap_or_default();
+        let ignored_outputs = key.get_value::<Vec<String>, _>("IgnoredOutputs").unwrap_or_default();
 
         let settings = Settings {
             alert_threshold,
             auto_audio,
             speaker_endpoint,
+            ignored_outputs,
         };
 
         log::debug!("Loaded settings: {:?}", settings);
