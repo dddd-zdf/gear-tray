@@ -179,6 +179,7 @@ impl AppState {
             &outputs,
             current.as_deref(),
             saved,
+            audio_output::stream_output().as_deref(),
         );
         if let Some(speaker) = decision.remember_speaker {
             if speaker != self.settings.speaker_endpoint {

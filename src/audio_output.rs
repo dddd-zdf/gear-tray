@@ -129,6 +129,19 @@ pub fn set_default(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// The output Nyx Refrain (AirPlay streaming) makes the default while it
+/// streams, usually a silent one. It is never the user's speaker.
+pub fn stream_output() -> Option<String> {
+    let path = std::path::Path::new(&std::env::var_os("APPDATA")?).join("nyx-refrain").join("gui.toml");
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "stream_output")
+            .then(|| value.trim().trim_matches('"').to_owned())
+            .filter(|id| !id.is_empty())
+    })
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Decision {
     /// Endpoint to make the default, if the current one is wrong.
@@ -140,19 +153,23 @@ pub struct Decision {
 /// Picks the output for a headset connection change. `headset_on` is the
 /// connected headset's sound device name, and `headsets` lists the sound
 /// device names of every known headset. A speaker chosen by the user is
-/// remembered; without one, the first ordinary output is used.
+/// remembered; without one, the first ordinary output is used. `stream_output`
+/// (see [`stream_output`]) is never remembered or returned to.
 pub fn decide(
     headset_on: Option<&str>,
     headsets: &[String],
     outputs: &[Endpoint],
     current: Option<&str>,
     saved_speaker: Option<&str>,
+    stream_output: Option<&str>,
 ) -> Decision {
     let is_headset = |endpoint: &Endpoint| headsets.iter().any(|name| endpoint.matches(name));
+    let is_speaker =
+        |endpoint: &Endpoint| !is_headset(endpoint) && Some(endpoint.id.as_str()) != stream_output;
     let current_endpoint = outputs.iter().find(|endpoint| Some(endpoint.id.as_str()) == current);
     let current_is_headset = current_endpoint.is_some_and(|endpoint| is_headset(endpoint));
     let remember_speaker = current_endpoint
-        .filter(|endpoint| !is_headset(endpoint))
+        .filter(|endpoint| is_speaker(endpoint))
         .map(|endpoint| endpoint.id.clone());
     if let Some(headset) = headset_on {
         let switch_to = outputs
@@ -168,11 +185,11 @@ pub fn decide(
     }
     let switch_to = outputs
         .iter()
-        .find(|endpoint| Some(endpoint.id.as_str()) == saved_speaker && !is_headset(endpoint))
+        .find(|endpoint| Some(endpoint.id.as_str()) == saved_speaker && is_speaker(endpoint))
         .or_else(|| {
             outputs
                 .iter()
-                .find(|endpoint| !is_headset(endpoint) && !endpoint.name.contains("Hands-Free"))
+                .find(|endpoint| is_speaker(endpoint) && !endpoint.name.contains("Hands-Free"))
         })
         .cloned();
     Decision { switch_to, remember_speaker: None }
@@ -185,6 +202,7 @@ mod tests {
     fn outputs() -> Vec<Endpoint> {
         [
             ("phone", "Speakers (iPhone Hands-Free HF Audio)"),
+            ("acer", "4 - VG240Y V (AMD High Definition Audio Device)"),
             ("headset", "Speakers (HyperX Cloud III S Wireless)"),
             ("monitor", "1 - LG HDR 4K (AMD High Definition Audio Device)"),
             ("desk", "Desk Speakers (Realtek(R) Audio)"),
@@ -202,7 +220,7 @@ mod tests {
 
     fn decide(on: bool, current: &str, saved: Option<&str>) -> Decision {
         let headsets = [HEADSET.to_owned()];
-        super::decide(on.then_some(HEADSET), &headsets, &outputs(), Some(current), saved)
+        super::decide(on.then_some(HEADSET), &headsets, &outputs(), Some(current), saved, Some("acer"))
     }
 
     #[test]
@@ -225,5 +243,17 @@ mod tests {
         let decision = decide(false, "desk", Some("monitor"));
         assert_eq!(target(&decision), None);
         assert_eq!(decision.remember_speaker.as_deref(), Some("desk"));
+    }
+
+    #[test]
+    fn stream_output_is_never_the_speaker() {
+        // Headset turned on while streaming: keep the saved speaker.
+        let decision = decide(true, "acer", Some("monitor"));
+        assert_eq!(target(&decision), Some("headset"));
+        assert_eq!(decision.remember_speaker, None);
+        // Saved before this fix: skip it.
+        assert_eq!(target(&decide(false, "headset", Some("acer"))), Some("monitor"));
+        // Headset off while still streaming: leave the stream output alone.
+        assert_eq!(target(&decide(false, "acer", Some("monitor"))), None);
     }
 }
